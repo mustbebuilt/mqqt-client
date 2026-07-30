@@ -1,0 +1,73 @@
+services:
+  # 1. MQTT Broker (Ingests telemetry from IoT clients)
+  mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: hydro-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"   # Standard TCP MQTT (for Node.js CLI & hardware)
+      - "9001:9001"   # WebSockets MQTT (for Browser Web Dashboard)
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+    networks:
+      - hydro-net
+
+  # 2. Time-Series Database (Stores historical river water quality readings)
+  influxdb:
+    image: influxdb:2.7
+    container_name: hydro-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=adminpassword123
+      - DOCKER_INFLUXDB_INIT_ORG=hydrosense
+      - DOCKER_INFLUXDB_INIT_BUCKET=river_water_quality
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=hydrosense-super-secret-auth-token-123
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    networks:
+      - hydro-net
+
+  # 3. Telegraf Subscriber Agent (Listens on MQTT and writes to InfluxDB)
+  telegraf:
+    image: telegraf:latest
+    container_name: hydro-telegraf
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+      - influxdb
+    volumes:
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    networks:
+      - hydro-net
+
+  # 4. Grafana Visual Dashboard Server (Visualizes telemetry on http://localhost:3000)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: hydro-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - influxdb
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+    networks:
+      - hydro-net
+
+networks:
+  hydro-net:
+    driver: bridge
+
+volumes:
+  influxdb-data:
+  grafana-data:

@@ -1,0 +1,20 @@
+# Dependencies
+node_modules
+client/node/node_modules
+
+# Git & GitHub
+.git
+.gitignore
+.github
+
+# OS Metadata & IDE files
+.DS_Store
+.vscode
+.idea
+
+# Log files & Documentation
+*.log
+*.md
+README.md
+walkthrough.md
+implementation_plan.md

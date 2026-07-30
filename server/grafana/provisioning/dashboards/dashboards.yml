@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: 'River Water Quality Monitoring'
+    orgId: 1
+    folder: 'HydroSense IoT'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json

@@ -1,0 +1,15 @@
+# Dependencies & Logs
+node_modules
+*.log
+
+# OS & Editor files
+.DS_Store
+.vscode
+.idea
+
+# Data directories
+data/
+influxdb-data/
+grafana-data/
+mosquitto/data/
+mosquitto/log/
