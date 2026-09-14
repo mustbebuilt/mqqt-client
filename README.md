@@ -4,7 +4,95 @@ A mock application for river water quality monitoring measuring **Oxygen Saturat
 
 ---
 
-## 📂 Project Architecture & Directory Structure
+## Core Technologies & Concepts Explained
+
+This project brings together standard Internet of Things (IoT) protocols, ingestion pipelines, time-series storage, and visualization platforms:
+
+```mermaid
+flowchart LR
+    subgraph Clients["IoT Clients & Publishers"]
+        Web["Web Dashboard Simulator\n(Browser / WebSockets)"]
+        Node["Headless CLI Gateway\n(Node.js / TCP)"]
+        Sensors["Multi-Node Simulators\n(River IoT Nodes)"]
+    end
+
+    subgraph ServerStack["Server Infrastructure (Docker Compose)"]
+        Mosquitto["Eclipse Mosquitto\n(MQTT Broker :1883 / :9001)"]
+        Telegraf["Telegraf Agent\n(MQTT Consumer & Parser)"]
+        InfluxDB[("InfluxDB v2\n(Time-Series DB :8086)")]
+        Grafana["Grafana Server\n(Visual Dashboards :3000)"]
+    end
+
+    Web -->|"MQTT over WS (Port 9001)"| Mosquitto
+    Node -->|"MQTT over TCP (Port 1883)"| Mosquitto
+    Sensors -->|"water-quality/rivers/+/telemetry"| Mosquitto
+    
+    Mosquitto -->|"Subscribe to Telemetry"| Telegraf
+    Telegraf -->|"Batch Write Line Protocol"| InfluxDB
+    Grafana -->|"Flux Query Telemetry"| InfluxDB
+```
+
+### 1. MQTT (Message Queuing Telemetry Transport)
+**MQTT** is an OASIS/ISO standard (ISO/IEC 20922) extremely lightweight, publish-subscribe network protocol designed for constrained devices, low-bandwidth environments, and high-latency or unreliable networks:
+- **Publish / Subscribe Model**: Rather than traditional client-server communication (like HTTP request/response), MQTT decouples senders (**Publishers**) from receivers (**Subscribers**). Clients send data to specific hierarchical topics without knowing which clients (if any) are listening.
+- **Topic Hierarchies**: Messages are published to string-based topic paths delimited by slashes (`/`), such as `water-quality/rivers/thames-01/telemetry`. Subscribers can listen to exact topics or use wildcards (`+` for single-level, `#` for multi-level).
+- **Quality of Service (QoS)**:
+  - `QoS 0` (At most once / "Fire and forget"): Messages are sent without acknowledgment (lowest overhead).
+  - `QoS 1` (At least once): Messages are guaranteed to arrive, but duplicates may occur.
+  - `QoS 2` (Exactly once): Guarantees delivery with no duplication (highest overhead).
+- **Last Will and Testament (LWT)**: When a client connects, it registers an LWT message (e.g., `OFFLINE`) with the broker. If the client disconnects ungracefully (loss of power or connection), the broker publishes the LWT message on behalf of the client to notify subscribers.
+
+---
+
+### 2. MQTT Broker
+An **MQTT Broker** is the central server and intelligence hub of any MQTT network:
+- **Message Routing & Filtering**: Receives all published messages, filters them by topic, and dispatches them exclusively to clients that subscribed to matching topic filters.
+- **Architectural Decoupling**:
+  - *Space Decoupling*: Publishers and subscribers do not need to know each other's IP addresses, hostnames, or physical locations.
+  - *Time Decoupling*: Publishers and subscribers do not need to run concurrently (especially when retained messages or persistent sessions are used).
+  - *Synchronization Decoupling*: Publishing and consuming operations are asynchronous and do not block the execution of edge sensor microcontrollers or clients.
+- **Session & State Management**: Maintains client connections, validates credentials/access control, manages message queues for disconnected clients with persistent sessions, and delivers retained messages to new subscribers.
+
+---
+
+### 3. Eclipse Mosquitto
+**Eclipse Mosquitto** is an open-source (EPL/EDL licensed) message broker that implements MQTT versions 5.0, 3.1.1, and 3.1:
+- **Lightweight & High-Performance**: Written in C, Mosquitto has a minimal memory footprint (~few MBs), making it suitable for everything from edge microcontrollers (like Raspberry Pi) to enterprise container clusters.
+- **Dual Transport in this Project**:
+  - **Standard TCP (`Port 1883`)**: Used by edge devices, hardware sensors, and the headless Node.js CLI clients.
+  - **WebSockets (`Port 9001`)**: Bridges MQTT over HTTP/WebSocket frames, enabling native browser applications (like our web dashboard) to publish and subscribe directly from pure JavaScript without native socket permissions.
+
+---
+
+### 4. Telegraf (InfluxData)
+**Telegraf** is an open-source, plugin-driven server agent developed by InfluxData for collecting, processing, aggregating, and writing telemetry data:
+- **Role in the Ingestion Pipeline**: Serves as the bridge between the real-time MQTT message stream and the persistent time-series database.
+- **Key Plugins Configured in this Project**:
+  - `inputs.mqtt_consumer`: Connects to Mosquitto as a persistent subscriber listening to `water-quality/rivers/+/telemetry`. It ingests JSON-formatted payloads, extracts field metrics (`oxygenSaturationPct`, `dissolvedOxygenMgl`, `waterTempC`, `ph`, `batteryPct`), and captures device/river metadata as indexed tags.
+  - `outputs.influxdb_v2`: Formats metrics into InfluxDB Line Protocol and writes them in efficient batches over HTTP into the InfluxDB storage engine.
+
+---
+
+### 5. InfluxDB (Time-Series Database)
+**InfluxDB** is a database engine purpose-built for handling time-series data (measurements indexed and ordered by time):
+- **Optimized for High Write Throughput**: Efficiently stores high-frequency sensor streams with automatic time-based partitioning and compression algorithms (e.g., Gorilla and Snappy compression).
+- **Data Retention & Aggregation**: Enables retention policies to automatically expire old telemetry or downsample historical readings over time.
+- **Flux & InfluxQL Engine**: Powers analytical queries and time-window aggregations across river metrics.
+
+---
+
+### 6. Grafana
+**Grafana** is an open-source analytics, metric querying, and interactive visualization suite:
+- **Real-Time Dashboards**: Connects to data sources like InfluxDB to query time-series data and render interactive panels, including:
+  - Oxygen Saturation percentage dials and gauges with color-coded thresholds (Hypoxia warning < 50%, Normal 80–110%, Supersaturated > 110%).
+  - Dissolved Oxygen (mg/L) historical trendlines.
+  - Water temperature and pH correlation charts.
+  - Battery levels and node connectivity status.
+- **Automated Provisioning**: Configured with declarative YAML files (`provisioning/datasources` and `provisioning/dashboards`) so that both the InfluxDB connection and the River Monitoring Dashboard load automatically without manual UI setup upon container startup.
+
+---
+
+## Project Architecture & Directory Structure
 
 The repository is structured to cleanly separate the **Server (MQTT Broker + Grafana Stack)** from the **Client applications** (Web Dashboard & Headless Node.js CLI):
 
@@ -36,7 +124,7 @@ mqqt-client/
 
 ---
 
-## 🖥️ 1. Server Stack Setup (Mosquitto + InfluxDB + Grafana)
+## 1. Server Stack Setup (Mosquitto + InfluxDB + Grafana)
 
 The server stack runs fully containerized via Docker Compose. It provisions:
 - **Mosquitto MQTT Broker**: Port `1883` (TCP) & Port `9001` (WebSockets)
@@ -65,7 +153,7 @@ docker compose down
 
 ---
 
-## 🔄 2. How to Switch Between Brokers
+## 2. How to Switch Between Brokers
 
 ### In the Web Client (`client/web/index.html`)
 1. Open `client/web/index.html` in your browser.
@@ -96,7 +184,7 @@ BROKER=mqtt://my-custom-broker.org:1883 node index.js
 
 ---
 
-## ⏱️ 3. How to Increase or Change Publish Intervals
+## 3. How to Increase or Change Publish Intervals
 
 By default, production devices publish every **1 hour (3600 seconds)**. You can change this interval to faster test modes or longer schedules:
 
@@ -132,7 +220,7 @@ node index.js --broker emqx --interval 10
 
 ---
 
-## 🚀 4. Launching Multiple ($N$) Headless IoT Clients Simultaneously
+## 4. Launching Multiple ($N$) Headless IoT Clients Simultaneously
 
 To test central server ingestion with $N$ simulated IoT river monitoring nodes running in parallel:
 
@@ -168,7 +256,7 @@ pkill -f "node client/node/index.js"
 
 ---
 
-## 📡 4. MQTT Topics Summary
+## 5. MQTT Topics Summary
 
 | Topic Pattern | Direction | Description |
 |---|---|---|
@@ -178,7 +266,7 @@ pkill -f "node client/node/index.js"
 
 ---
 
-## 📊 Sample Telemetry JSON Payload
+## 6. Sample Telemetry JSON Payload
 
 ```json
 {
